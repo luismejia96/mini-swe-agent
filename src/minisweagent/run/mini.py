@@ -20,6 +20,7 @@ from minisweagent.agents.interactive_textual import TextualAgent
 from minisweagent.config import builtin_config_dir, get_config_path
 from minisweagent.environments.local import LocalEnvironment
 from minisweagent.models import get_model
+from minisweagent.run.auth import check_api_key
 from minisweagent.run.extra.config import configure_if_first_time
 from minisweagent.run.utils.save import save_traj
 
@@ -63,7 +64,15 @@ def main(
     exit_immediately: bool = typer.Option(
         False, "--exit-immediately", help="Exit immediately when the agent wants to finish instead of prompting."
     ),
+    api_key: str | None = typer.Option(
+        None,
+        "--api-key",
+        envvar="MINI_SWE_AGENT_KEY",
+        help="API key required when MINI_SWE_AGENT_KEY is set in the environment.",
+        show_default=False,
+    ),
 ) -> Any:
+    check_api_key(api_key)
     configure_if_first_time()
     config = yaml.safe_load(get_config_path(config_spec).read_text())
 
