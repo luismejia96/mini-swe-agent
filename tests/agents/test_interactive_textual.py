@@ -15,7 +15,8 @@ def get_screen_text(app: TextualAgent) -> str:
     text_parts = [app.title]
 
     def _widget_text(static_widget) -> str | None:
-        # Textual 8.x uses `content`; older versions used `renderable`
+        # Textual 8.x stores content in `content`; older versions used `renderable`.
+        # `content` returns "" (falsy) when empty, so the `or` fallback is safe.
         raw = getattr(static_widget, "content", None) or getattr(static_widget, "renderable", None)
         return str(raw) if raw else None
 
@@ -261,7 +262,10 @@ async def test_empty_agent_content():
     async with app.run_test() as pilot:
         # Start the agent with the task
         threading.Thread(target=lambda: app.agent.run("Empty test"), daemon=True).start()
-        # At 0.1s the agent has added system+user messages but is still sleeping in query()
+        # Poll until messages are populated (agent is mid-query sleeping at /sleep 0.5)
+        # then give Textual one extra tick to finish mounting the content widgets.
+        while not app.agent.messages:
+            await pilot.pause(0.05)
         await pilot.pause(0.1)
         content = get_screen_text(app)
         assert "Waiting for agent to start" in content or "You are a helpful assistant" in content
