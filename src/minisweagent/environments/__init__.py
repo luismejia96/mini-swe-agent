@@ -9,7 +9,6 @@ _ENVIRONMENT_MAPPING = {
     "docker": "minisweagent.environments.docker.DockerEnvironment",
     "singularity": "minisweagent.environments.singularity.SingularityEnvironment",
     "local": "minisweagent.environments.local.LocalEnvironment",
-    "readonly": "minisweagent.environments.readonly.ReadOnlyLocalEnvironment",
     "swerex_docker": "minisweagent.environments.extra.swerex_docker.SwerexDockerEnvironment",
 }
 
