@@ -9,6 +9,7 @@ subcommands = [
     ("minisweagent.run.extra.config", ["config"], "Manage the global config file"),
     ("minisweagent.run.inspector", ["inspect", "i", "inspector"], "Run inspector (browse trajectories)"),
     ("minisweagent.run.github_issue", ["github-issue", "gh"], "Run on a GitHub issue"),
+    ("minisweagent.run.vuln_scan", ["vuln-scan", "vs"], "Run vulnerability scanner on a path or Docker image"),
     ("minisweagent.run.extra.swebench", ["swebench"], "Evaluate on SWE-bench (batch mode)"),
     ("minisweagent.run.extra.swebench_single", ["swebench-single"], "Evaluate on SWE-bench (single instance)"),
 ]

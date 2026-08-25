@@ -14,19 +14,25 @@ def get_screen_text(app: TextualAgent) -> str:
     """Extract all text content from the app's UI."""
     text_parts = [app.title]
 
+    def _widget_text(static_widget) -> str | None:
+        # Textual 8.x stores content in `content`; older versions used `renderable`.
+        # `content` returns "" (falsy) when empty, so the `or` fallback is safe.
+        raw = getattr(static_widget, "content", None) or getattr(static_widget, "renderable", None)
+        return str(raw) if raw else None
+
     # Get all Static widgets in the main content container
     content_container = app.query_one("#content")
     for static_widget in content_container.query("Static"):
         if static_widget.display:
-            if hasattr(static_widget, "renderable") and static_widget.renderable:  # type: ignore[attr-defined]
-                text_parts.append(str(static_widget.renderable))  # type: ignore[attr-defined]
+            if text := _widget_text(static_widget):
+                text_parts.append(text)
 
     # Also check the input container if it's visible
     if app.input_container.display:
         for static_widget in app.input_container.query("Static"):
             if static_widget.display:
-                if hasattr(static_widget, "renderable") and static_widget.renderable:  # type: ignore[attr-defined]
-                    text_parts.append(str(static_widget.renderable))  # type: ignore[attr-defined]
+                if text := _widget_text(static_widget):
+                    text_parts.append(text)
 
     return "\n".join(text_parts)
 
@@ -73,14 +79,19 @@ async def test_everything_integration_test():
     async with app.run_test() as pilot:
         # Start the agent with the task
         threading.Thread(target=lambda: app.agent.run("What's up?"), daemon=True).start()
-        await pilot.pause(0.2)
+        # Wait until messages are populated, then give Textual one more tick to finish mounting
+        while not app.agent.messages:
+            await pilot.pause(0.05)
+        await pilot.pause(0.1)
         assert app.agent_state == "RUNNING"
         assert "You are a helpful assistant that can do anything." in get_screen_text(app)
         assert "press enter" not in get_screen_text(app).lower()
         assert "Step 1/1" in app.title
 
         print(">>> Agent autoforwards -> step 2, then waiting for input")
-        await pilot.pause(0.7)
+        while app.agent_state != "AWAITING_INPUT":
+            await pilot.pause(0.1)
+        await pilot.pause(0.1)  # let Textual finish mounting content widgets
         assert "Step 2/2" in app.title
         assert app.agent_state == "AWAITING_INPUT"
         assert "AWAITING_INPUT" in app.title
@@ -121,7 +132,9 @@ async def test_everything_integration_test():
         await type_text(pilot, "Not safe to execute")
         await pilot.press("enter")
         print(get_screen_text(app))
-        await pilot.pause(0.3)
+        while "Step 4/4" not in app.title:
+            await pilot.pause(0.1)
+        await pilot.pause(0.1)
         assert "Step 4/4" in app.title
         assert "echo '3'" in get_screen_text(app)
 
@@ -130,7 +143,9 @@ async def test_everything_integration_test():
         await type_text(pilot, "Not safe to execute\n")
         await pilot.press("ctrl+d")
         print(get_screen_text(app))
-        await pilot.pause(0.3)
+        while "Step 5/5" not in app.title:
+            await pilot.pause(0.1)
+        await pilot.pause(0.1)
         assert "Step 5/5" in app.title
         assert "echo '4'" in get_screen_text(app)
 
@@ -139,7 +154,8 @@ async def test_everything_integration_test():
         await pilot.press("u")
 
         assert pilot.app.agent.config.mode == "human"  # type: ignore[attr-defined]
-        await pilot.pause(0.2)
+        while "User switched to manual mode" not in get_screen_text(app):
+            await pilot.pause(0.1)
         print(get_screen_text(app))
         assert "User switched to manual mode, this command will be ignored" in get_screen_text(app)
         assert "Enter your command" in get_screen_text(app)
@@ -148,7 +164,9 @@ async def test_everything_integration_test():
         print(">>> Human gives command")
         await type_text(pilot, "echo 'human'")
         await pilot.press("enter")
-        await pilot.pause(0.2)
+        while "Step 6/6" not in app.title:
+            await pilot.pause(0.1)
+        await pilot.pause(0.1)
         print(get_screen_text(app))
         assert "Step 6/6" in app.title
         assert "human" in get_screen_text(app)  # show the observation
@@ -159,13 +177,12 @@ async def test_everything_integration_test():
         await pilot.press("y")
         # Note that this will add one step, because we're basically now executing an empty human action
         assert pilot.app.agent.config.mode == "yolo"  # type: ignore[attr-defined]
-        # await pilot.press("enter")  # still need to confirm once for step 3
-        # next action will be executed automatically, so we see step 6 next
-        await pilot.pause(0.2)
+        # next action will be executed automatically, so we see step 10 next
+        while "Step 10/10" not in app.title:
+            await pilot.pause(0.1)
+        await pilot.pause(0.1)
         assert "Step 10/10" in app.title
         assert "echo 'COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT'" in get_screen_text(app)
-        # await pilot.pause(0.1)
-        # assert "press enter" not in get_screen_text(app).lower()
         print(get_screen_text(app))
         assert "AWAITING_INPUT" in app.title  # still waiting for confirmation of exit
 
@@ -184,7 +201,9 @@ async def test_everything_integration_test():
         assert "to give it a new task" in get_screen_text(app).lower()
         await type_text(pilot, "New task")
         await pilot.press("enter")
-        await pilot.pause(0.2)
+        while "Step 11/11" not in app.title:
+            await pilot.pause(0.1)
+        await pilot.pause(0.1)
 
         print(">>> Exit confirmation should appear again")
         assert "Step 11/11" in app.title
@@ -232,16 +251,21 @@ def test_messages_to_steps_edge_cases():
 
 
 async def test_empty_agent_content():
-    """Test app behavior with no messages."""
+    """Test app behavior before messages arrive: screen shows initial placeholder or first system message."""
     app = TextualAgent(
-        model=DeterministicModel(outputs=[]),
+        model=DeterministicModel(
+            outputs=["/sleep 0.5", "```bash\necho COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\n```"]
+        ),
         env=LocalEnvironment(),
         mode="yolo",
     )
     async with app.run_test() as pilot:
         # Start the agent with the task
         threading.Thread(target=lambda: app.agent.run("Empty test"), daemon=True).start()
-        # Initially should show waiting message
+        # Poll until messages are populated (agent is mid-query sleeping at /sleep 0.5)
+        # then give Textual one extra tick to finish mounting the content widgets.
+        while not app.agent.messages:
+            await pilot.pause(0.05)
         await pilot.pause(0.1)
         content = get_screen_text(app)
         assert "Waiting for agent to start" in content or "You are a helpful assistant" in content
@@ -282,30 +306,39 @@ async def test_list_content_rendering():
         ),
         env=LocalEnvironment(),
         mode="yolo",
+        # confirm_exit=True (default) so the app stays alive for manipulation
     )
 
     async with app.run_test() as pilot:
         # Start the agent with the task
         threading.Thread(target=lambda: app.agent.run("Content test"), daemon=True).start()
-        # Wait for the agent to finish its normal operation
-        await pilot.pause(0.2)
+        # Wait for exit-confirmation prompt (app still running, DOM alive)
+        while app.agent_state != "AWAITING_INPUT":
+            await pilot.pause(0.1)
 
-        # Now manually add a message with list content to test rendering
+        # Manually add a message with list content to test rendering
         app.agent.messages.append({"role": "assistant", "content": [{"text": "Line 1"}, {"text": "Line 2"}]})
 
         # Trigger the message update logic to refresh step count and navigate to last step
         app.on_message_added()
-
-        # Navigate to the last step to see our new message
         app.action_last_step()
+        await pilot.pause(0.1)
 
         assert "Line 1\nLine 2" in get_screen_text(app)
+
+        # Confirm exit so the app shuts down cleanly
+        await pilot.press("enter")
 
 
 async def test_confirmation_rejection_with_message():
     """Test rejecting an action with a custom message."""
     app = TextualAgent(
-        model=DeterministicModel(outputs=["Test thought\n```bash\necho 'test'\n```"]),
+        model=DeterministicModel(
+            outputs=[
+                "Test thought\n```bash\necho 'test'\n```",
+                "Retry\n```bash\necho COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\n```",
+            ]
+        ),
         env=LocalEnvironment(),
         mode="confirm",
     )
@@ -313,18 +346,24 @@ async def test_confirmation_rejection_with_message():
     async with app.run_test() as pilot:
         # Start the agent with the task
         threading.Thread(target=lambda: app.agent.run("Rejection test"), daemon=True).start()
-        await pilot.pause(0.1)
 
         # Wait for input prompt
         while app.agent_state != "AWAITING_INPUT":
             await pilot.pause(0.1)
+        await pilot.pause(0.1)  # let Textual finish mounting content widgets
 
         # Type rejection message and submit
         await type_text(pilot, "Not safe to run")
         await pilot.press("enter")
-        await pilot.pause(0.1)
 
-        # Verify the command was rejected with the message
+        # Wait for agent to re-query and present the retry action for confirmation
+        while app.agent_state != "AWAITING_INPUT":
+            await pilot.pause(0.1)
+
+        # Rejection message lives in the previous step; navigate back to verify it
+        await pilot.press("escape")
+        app.action_previous_step()
+        await pilot.pause(0.1)
         assert "Command not executed: Not safe to run" in get_screen_text(app)
 
 
@@ -403,18 +442,18 @@ async def test_input_container_multiple_actions():
     async with app.run_test() as pilot:
         # Start the agent with the task
         threading.Thread(target=lambda: app.agent.run("Multiple actions test"), daemon=True).start()
-        await pilot.pause(0.1)
 
         # Confirm first action
         while app.agent_state != "AWAITING_INPUT":
             await pilot.pause(0.1)
+        await pilot.pause(0.1)  # let Textual finish mounting content widgets
         assert "echo '1'" in get_screen_text(app)
         await pilot.press("enter")
 
         # Wait for and confirm second action
-        await pilot.pause(0.1)
         while app.agent_state != "AWAITING_INPUT":
             await pilot.pause(0.1)
+        await pilot.pause(0.1)  # let Textual finish mounting content widgets
         assert "echo '2'" in get_screen_text(app)
         await pilot.press("enter")
 
@@ -485,6 +524,7 @@ async def test_yolo_mode_confirms_pending_action():
         # Wait for input prompt
         while app.agent_state != "AWAITING_INPUT":
             await pilot.pause(0.1)
+        await pilot.pause(0.1)  # let Textual finish mounting content widgets
 
         # Verify we're in confirm mode and awaiting input
         assert app.agent.config.mode == "confirm"
